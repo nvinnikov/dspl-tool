@@ -6,6 +6,18 @@ import ServiceManagement
 
 let rollbackSeconds = 5
 
+// У приложения нет собственного .icns, поэтому в алертах показываем SF Symbol.
+// Символы приходят и уходят между версиями macOS — отсюда fallback.
+func symbolIcon(_ name: String, fallback: String) -> NSImage? {
+    let config = NSImage.SymbolConfiguration(pointSize: 48, weight: .regular)
+    for candidate in [name, fallback] {
+        if let image = NSImage(systemSymbolName: candidate, accessibilityDescription: nil) {
+            return image.withSymbolConfiguration(config)
+        }
+    }
+    return nil
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
 
@@ -28,20 +40,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Значок показывает, есть ли выключенные мониторы, чтобы не открывать меню.
     @objc private func updateIcon() {
         let hasDisabled = listDisplays().contains { !$0.isActive }
-        let candidates = hasDisabled
-            ? ["display.slash", "display.trianglebadge.exclamationmark", "display"]
-            : ["display"]
+        // display.slash в SF Symbols нет — перечёркнутый прямоугольник ближе всего
+        // по смыслу «экран выключен».
+        let name = hasDisabled ? "rectangle.slash" : "display"
 
-        for name in candidates {
-            if let image = NSImage(systemSymbolName: name, accessibilityDescription: "Мониторы") {
-                image.isTemplate = true
-                statusItem.button?.image = image
-                statusItem.button?.title = ""
-                return
-            }
+        if let image = NSImage(systemSymbolName: name, accessibilityDescription: "Мониторы") {
+            image.isTemplate = true
+            statusItem.button?.image = image
+            statusItem.button?.title = ""
+        } else {
+            statusItem.button?.image = nil
+            statusItem.button?.title = hasDisabled ? "▨" : "▣"
         }
-        statusItem.button?.image = nil
-        statusItem.button?.title = hasDisabled ? "▨" : "▣"
     }
 
     // MARK: - Меню
@@ -128,12 +138,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // экране, так что достаточно на неё посмотреть.
     private func confirmOrRollback(_ display: DisplayInfo) {
         let alert = NSAlert()
+        alert.icon = symbolIcon(display.isBuiltin ? "laptopcomputer.slash" : "rectangle.slash",
+                                fallback: "display")
         alert.messageText = "\(display.name) выключен"
-        alert.addButton(withTitle: "Оставить")
-        alert.addButton(withTitle: "Вернуть")
+        alert.addButton(withTitle: "Подтвердить")
+        alert.addButton(withTitle: "Отменить")
 
         var secondsLeft = rollbackSeconds
-        alert.informativeText = "Вернём через \(secondsLeft) с, если не подтвердить."
+        alert.informativeText = "Вернём через \(secondsLeft) с."
 
         let timer = Timer(timeInterval: 1, repeats: true) { timer in
             secondsLeft -= 1
@@ -141,7 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 timer.invalidate()
                 NSApp.abortModal()
             } else {
-                alert.informativeText = "Вернём через \(secondsLeft) с, если не подтвердить."
+                alert.informativeText = "Вернём через \(secondsLeft) с."
             }
         }
         // .common, иначе таймер не тикает, пока крутится модальный runloop.
@@ -159,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func report(_ title: String, _ detail: String) {
         let alert = NSAlert()
+        alert.icon = symbolIcon("display.trianglebadge.exclamationmark", fallback: "display")
         alert.alertStyle = .warning
         alert.messageText = title
         alert.informativeText = detail

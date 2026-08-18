@@ -34,8 +34,13 @@ build_cli() {
 }
 
 build_app() {
-  mkdir -p "$APP/Contents/MacOS"
+  mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
   swiftc -O "$CORE" "$ROOT/Sources/DsplBar/main.swift" -o "$APP/Contents/MacOS/DsplBar"
+
+  # Иконка лежит в репозитории собранной; пересобрать — swift Tools/make-icon.swift
+  if [ -f "$ROOT/Resources/AppIcon.icns" ]; then
+    cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+  fi
 
   cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -43,6 +48,7 @@ build_app() {
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key><string>DsplBar</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleIdentifier</key><string>com.nvinnikov.dsplbar</string>
     <key>CFBundleName</key><string>DsplBar</string>
     <key>CFBundlePackageType</key><string>APPL</string>
