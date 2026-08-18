@@ -12,30 +12,25 @@
 
 ```bash
 brew tap nvinnikov/dspl
-brew install dspl
+brew install dspl              # CLI
+brew install --cask dsplbar    # приложение в статус-баре
 ```
-
-После `brew tap` формула зовётся коротким именем. Без тапа — полным:
-`brew install nvinnikov/dspl/dspl`.
-
-CLI готов сразу. Приложение ставится в `$(brew --prefix)/opt/dspl/DsplBar.app` —
-скопируй его к себе, чтобы оно попало в Launchpad:
 
 ```bash
-cp -R "$(brew --prefix)/opt/dspl/DsplBar.app" ~/Applications/
-open ~/Applications/DsplBar.app
+open -a DsplBar
 ```
 
-Именно копию, а не симлинк: macOS рисует ссылку на приложение как алиас — со
-стрелкой и светлой подложкой, — и в Launchpad вместо иконки видна белая рамка.
-Обратная сторона в том, что после `brew upgrade dspl` копию нужно обновлять:
+CLI и приложение ставятся по-разному не от хорошей жизни. Формула Homebrew
+работает в песочнице и писать в `/Applications` не может — это мир CLI. Для
+приложений есть cask: он переносит бандл в `/Applications` и снимает карантин
+Gatekeeper, без чего ad-hoc подписанное приложение просто не откроется.
+
+Обновление — `brew upgrade`. Приложение после него надо перезапустить, старое
+остаётся в памяти:
 
 ```bash
-bash Tools/update-app.sh
+pkill -f DsplBar && open -a DsplBar
 ```
-
-Формула собирает из исходников на месте — это не прихоть: приложение подписано
-ad-hoc, и готовый бандл, скачанный из интернета, macOS положила бы под карантин.
 
 ### Из исходников
 
@@ -46,7 +41,9 @@ bash install.sh
 ```
 
 Ставит `~/bin/dspl` и `~/Applications/DsplBar.app`. По отдельности:
-`bash install.sh --cli` или `bash install.sh --app`.
+`bash install.sh --cli` или `bash install.sh --app`. Если рядом стоит версия из
+Homebrew, проверь, какая из них раньше в `PATH` — иначе будешь править одну, а
+запускать другую.
 
 ### Готовые бинарники
 
