@@ -18,12 +18,20 @@ brew install dspl
 После `brew tap` формула зовётся коротким именем. Без тапа — полным:
 `brew install nvinnikov/dspl/dspl`.
 
-CLI готов сразу. Приложение ставится в `$(brew --prefix)/opt/dspl/DsplBar.app`,
-чтобы оно попало в Launchpad:
+CLI готов сразу. Приложение ставится в `$(brew --prefix)/opt/dspl/DsplBar.app` —
+скопируй его к себе, чтобы оно попало в Launchpad:
 
 ```bash
-ln -sfn "$(brew --prefix)/opt/dspl/DsplBar.app" ~/Applications/DsplBar.app
+cp -R "$(brew --prefix)/opt/dspl/DsplBar.app" ~/Applications/
 open ~/Applications/DsplBar.app
+```
+
+Именно копию, а не симлинк: macOS рисует ссылку на приложение как алиас — со
+стрелкой и светлой подложкой, — и в Launchpad вместо иконки видна белая рамка.
+Обратная сторона в том, что после `brew upgrade dspl` копию нужно обновлять:
+
+```bash
+bash Tools/update-app.sh
 ```
 
 Формула собирает из исходников на месте — это не прихоть: приложение подписано
