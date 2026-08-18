@@ -11,16 +11,42 @@
 ## Установка
 
 ```bash
+brew install nvinnikov/dspl/dspl
+```
+
+CLI готов сразу. Приложение ставится в `$(brew --prefix)/opt/dspl/DsplBar.app`,
+чтобы оно попало в Launchpad:
+
+```bash
+ln -sfn "$(brew --prefix)/opt/dspl/DsplBar.app" ~/Applications/DsplBar.app
+open ~/Applications/DsplBar.app
+```
+
+Формула собирает из исходников на месте — это не прихоть: приложение подписано
+ad-hoc, и готовый бандл, скачанный из интернета, macOS положила бы под карантин.
+
+### Из исходников
+
+```bash
 git clone https://github.com/nvinnikov/dspl-tool.git
 cd dspl-tool
 bash install.sh
 ```
 
-Ставит `~/bin/dspl` и `~/Applications/DsplBar.app`. Можно по отдельности:
+Ставит `~/bin/dspl` и `~/Applications/DsplBar.app`. По отдельности:
 `bash install.sh --cli` или `bash install.sh --app`.
 
-Нужны Command Line Tools (`xcode-select --install`). Больше зависимостей нет,
-Xcode тоже не нужен — приложение собирается `swiftc` и подписывается ad-hoc.
+### Готовые бинарники
+
+В [релизах](https://github.com/nvinnikov/dspl-tool/releases) лежит собранный
+архив под Apple Silicon. После скачивания придётся снять карантин:
+
+```bash
+xattr -dr com.apple.quarantine DsplBar.app
+```
+
+Нужны Command Line Tools (`xcode-select --install`), macOS 13+. Xcode не нужен:
+приложение собирается `swiftc` и подписывается ad-hoc.
 
 ## Использование
 
