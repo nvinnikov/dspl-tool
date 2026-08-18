@@ -29,6 +29,88 @@ func symbolIcon(_ name: String, fallback: String) -> NSImage? {
     return nil
 }
 
+// Строка меню с регулятором яркости. Отдельным NSView, потому что штатный
+// NSMenuItem умеет только текст и галочку.
+final class BrightnessRow: NSView {
+    private let displayID: CGDirectDisplayID
+    private let name: String
+    private let label = NSTextField(labelWithString: "")
+    private let slider = NSSlider()
+    // Пока меню открыто, main-очередь не обслуживается: отложенная через неё
+    // запись доедет только после отпускания ползунка. Поэтому пишем из своей
+    // фоновой очереди, схлопывая промежуточные значения.
+    private static let writeQueue = DispatchQueue(label: "dspl.brightness")
+    private let lock = NSLock()
+    private var pendingValue: Int?
+    private var writing = false
+
+    init(display: DisplayInfo) {
+        self.displayID = display.id
+        self.name = display.name
+        super.init(frame: NSRect(x: 0, y: 0, width: 260, height: 46))
+
+        let value = brightness(display.id)
+        label.font = .menuFont(ofSize: 12)
+        label.textColor = .secondaryLabelColor
+        label.frame = NSRect(x: 20, y: 26, width: 220, height: 16)
+
+        slider.minValue = 0
+        slider.maxValue = 100
+        slider.doubleValue = Double(value)
+        slider.isContinuous = true
+        slider.target = self
+        slider.action = #selector(sliderMoved)
+        slider.frame = NSRect(x: 20, y: 6, width: 220, height: 20)
+
+        addSubview(label)
+        addSubview(slider)
+        updateLabel(value)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    private func updateLabel(_ value: Int) {
+        label.stringValue = "Яркость \(value)%"
+    }
+
+    @objc private func sliderMoved(_ sender: NSSlider) {
+        let value = Int(sender.doubleValue.rounded())
+        updateLabel(value)
+
+        lock.lock()
+        pendingValue = value
+        let alreadyWriting = writing
+        if !alreadyWriting { writing = true }
+        lock.unlock()
+
+        guard !alreadyWriting else { return }
+        Self.writeQueue.async { [weak self] in self?.drainWrites() }
+    }
+
+    // Забираем всегда самое свежее значение, промежуточные выбрасываем: монитор
+    // за движением мыши всё равно не успевает, а очередь из команд его вешает.
+    private func drainWrites() {
+        var last: Int?
+        while true {
+            lock.lock()
+            guard let value = pendingValue else {
+                writing = false
+                lock.unlock()
+                if let last { rememberBrightness(displayID, last) }
+                return
+            }
+            pendingValue = nil
+            lock.unlock()
+
+            if let error = setBrightness(displayID, percent: value, persist: false) {
+                logEvent("яркость \(name) -> \(value)%: \(error)")
+            }
+            last = value
+            usleep(25_000)
+        }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var watchdog: Timer?
@@ -85,6 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func displayConfigurationChanged() {
+        invalidateBrightnessCache()
         updateIcon()
         rescueIfBlind(source: "config")
     }
@@ -158,6 +241,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // Последний включённый гасить нельзя — гасим меню, а не экран.
             item.isEnabled = !(display.isActive && activeCount == 1)
             menu.addItem(item)
+
+            // Регулятор только у включённых: у погашенного экрана яркость
+            // менять бессмысленно.
+            if display.isActive, supportsBrightness(display.id) {
+                let row = NSMenuItem()
+                row.view = BrightnessRow(display: display)
+                menu.addItem(row)
+            }
         }
 
         menu.addItem(.separator())

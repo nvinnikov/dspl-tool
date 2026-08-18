@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-CORE="$ROOT/Sources/Core/DisplayCore.swift"
+CORE="$ROOT/Sources/Core/DisplayCore.swift $ROOT/Sources/Core/Brightness.swift"
 BIN_DIR="$HOME/bin"
 APP_DIR="$HOME/Applications"
 APP="$APP_DIR/DsplBar.app"
@@ -18,7 +18,7 @@ WHAT="${1:---all}"
 
 build_cli() {
   mkdir -p "$BIN_DIR"
-  swiftc -O "$CORE" "$ROOT/Sources/dspl/main.swift" -o "$BIN_DIR/dspl"
+  swiftc -O $CORE "$ROOT/Sources/dspl/main.swift" -o "$BIN_DIR/dspl"
   echo "собрано: $BIN_DIR/dspl"
 
   case ":$PATH:" in
@@ -35,7 +35,7 @@ build_cli() {
 
 build_app() {
   mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-  swiftc -O "$CORE" "$ROOT/Sources/DsplBar/main.swift" -o "$APP/Contents/MacOS/DsplBar"
+  swiftc -O $CORE "$ROOT/Sources/DsplBar/main.swift" -o "$APP/Contents/MacOS/DsplBar"
 
   # Иконка лежит в репозитории собранной; пересобрать — swift Tools/make-icon.swift
   cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"

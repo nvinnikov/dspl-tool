@@ -99,11 +99,14 @@ struct DisplaySnapshot: Codable {
     // Единственный способ отличить погашенный нами монитор от выдернутого из
     // розетки: система показывает оба одинаково — их просто нет.
     var disabledByUs: Bool
+    // Текущую яркость монитор по DDC сообщает редко, приходится помнить самим.
+    var brightness: Int?
 
     init(id: CGDirectDisplayID, number: Int, name: String,
-         width: Int, height: Int, disabledByUs: Bool = false) {
+         width: Int, height: Int, disabledByUs: Bool = false, brightness: Int? = nil) {
         self.id = id; self.number = number; self.name = name
-        self.width = width; self.height = height; self.disabledByUs = disabledByUs
+        self.width = width; self.height = height
+        self.disabledByUs = disabledByUs; self.brightness = brightness
     }
 
     // Поля добавлялись со временем — старый state-файл без них должен читаться.
@@ -115,6 +118,7 @@ struct DisplaySnapshot: Codable {
         width = try container.decode(Int.self, forKey: .width)
         height = try container.decode(Int.self, forKey: .height)
         disabledByUs = try container.decodeIfPresent(Bool.self, forKey: .disabledByUs) ?? false
+        brightness = try container.decodeIfPresent(Int.self, forKey: .brightness)
     }
 }
 
@@ -176,7 +180,8 @@ public func listDisplays() -> [DisplayInfo] {
             name: liveName(id, names: names),
             width: CGDisplayPixelsWide(id),
             height: CGDisplayPixelsHigh(id),
-            disabledByUs: false          // раз система его видит, гасить нечего
+            disabledByUs: false,         // раз система его видит, гасить нечего
+            brightness: byID[id]?.brightness
         )
     }
 
