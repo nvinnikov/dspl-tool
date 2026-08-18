@@ -87,9 +87,25 @@ func liveName(_ id: CGDirectDisplayID) -> String {
 
 struct DisplaySnapshot: Codable {
     let id: CGDirectDisplayID
+    var number: Int          // порядковый номер для человека, 0 — ещё не назначен
     let name: String
     let width: Int
     let height: Int
+
+    init(id: CGDirectDisplayID, number: Int, name: String, width: Int, height: Int) {
+        self.id = id; self.number = number; self.name = name
+        self.width = width; self.height = height
+    }
+
+    // number появился позже — старый state-файл без него должен читаться.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(CGDirectDisplayID.self, forKey: .id)
+        number = try container.decodeIfPresent(Int.self, forKey: .number) ?? 0
+        name = try container.decode(String.self, forKey: .name)
+        width = try container.decode(Int.self, forKey: .width)
+        height = try container.decode(Int.self, forKey: .height)
+    }
 }
 
 let stateURL: URL = {
@@ -105,34 +121,32 @@ func loadSnapshots() -> [DisplaySnapshot] {
 }
 
 // Дописываем к сохранённым, а не перетираем: сейчас-online — не весь мир,
-// какой-то дисплей может быть выключен именно нами.
-func rememberOnlineDisplays() {
-    var byID: [CGDirectDisplayID: DisplaySnapshot] = [:]
-    for snapshot in loadSnapshots() { byID[snapshot.id] = snapshot }
-    for id in onlineDisplays() {
-        byID[id] = DisplaySnapshot(
-            id: id,
-            name: liveName(id),
-            width: CGDisplayPixelsWide(id),
-            height: CGDisplayPixelsHigh(id)
-        )
-    }
-    let sorted = byID.values.sorted { $0.id < $1.id }
-    try? JSONEncoder().encode(sorted).write(to: stateURL)
-}
-
+// какой-то дисплей может быть выключен именно нами. Заодно раздаём порядковые
+// номера — сырой CGDirectDisplayID бывает вида 724045334 и руками не набирается.
 func knownDisplays() -> [DisplaySnapshot] {
     var byID: [CGDirectDisplayID: DisplaySnapshot] = [:]
     for snapshot in loadSnapshots() { byID[snapshot.id] = snapshot }
     for id in onlineDisplays() {
         byID[id] = DisplaySnapshot(
             id: id,
+            number: byID[id]?.number ?? 0,
             name: liveName(id),
             width: CGDisplayPixelsWide(id),
             height: CGDisplayPixelsHigh(id)
         )
     }
-    return byID.values.sorted { $0.id < $1.id }
+
+    var used = Set(byID.values.map(\.number).filter { $0 > 0 })
+    for id in byID.keys.sorted() where byID[id]!.number == 0 {
+        var next = 1
+        while used.contains(next) { next += 1 }
+        byID[id]!.number = next
+        used.insert(next)
+    }
+
+    let displays = byID.values.sorted { $0.number < $1.number }
+    try? JSONEncoder().encode(displays).write(to: stateURL)
+    return displays
 }
 
 // MARK: - Вывод
@@ -142,27 +156,41 @@ func fail(_ message: String) -> Never {
     exit(1)
 }
 
+func pad(_ text: String, _ width: Int) -> String {
+    text.count >= width ? text + " " : text.padding(toLength: width, withPad: " ", startingAt: 0)
+}
+
 func printList() {
     let active = Set(activeDisplays())
-    for display in knownDisplays() {
-        let state = active.contains(display.id) ? "on " : "OFF"
-        let name = display.name.padding(toLength: 22, withPad: " ", startingAt: 0)
-        print("\(display.id)\t\(state)\t\(name)\t\(display.width)x\(display.height)")
+    let displays = knownDisplays()
+    let nameWidth = max(4, displays.map { $0.name.count }.max() ?? 4)
+    print("\(pad("#", 3))\(pad("STATE", 7))\(pad("NAME", nameWidth + 2))\(pad("RESOLUTION", 12))ID")
+    for display in displays {
+        let state = active.contains(display.id) ? "on" : "OFF"
+        print(pad("\(display.number)", 3)
+            + pad(state, 7)
+            + pad(display.name, nameWidth + 2)
+            + pad("\(display.width)x\(display.height)", 12)
+            + "\(display.id)")
     }
 }
 
+// Роль, порядковый номер или имя монитора. Сырой id аргументом не принимаем:
+// он нестабилен между переподключениями и в выводе есть только для справки.
 func resolve(_ argument: String) -> CGDirectDisplayID? {
     let displays = knownDisplays()
-    switch argument {
-    case "builtin":
+    let query = argument.lowercased()
+
+    if query == "builtin" {
         return displays.first { $0.name == "Built-in Display" }?.id
-            ?? onlineDisplays().first { CGDisplayIsBuiltin($0) != 0 }
-    case "external":
-        return displays.first { $0.name != "Built-in Display" }?.id
-            ?? onlineDisplays().first { CGDisplayIsBuiltin($0) == 0 }
-    default:
-        return CGDirectDisplayID(argument)
     }
+    if query == "external" {
+        return displays.first { $0.name != "Built-in Display" }?.id
+    }
+    if let number = Int(argument) {
+        return displays.first { $0.number == number }?.id
+    }
+    return displays.first { $0.name.lowercased() == query }?.id
 }
 
 // MARK: - Применение
@@ -228,7 +256,7 @@ func disable(_ id: CGDirectDisplayID, name: String, skipConfirm: Bool, timeout: 
     if activeDisplays().filter({ $0 != id }).isEmpty {
         fail("отказ: \(name) — последний активный дисплей")
     }
-    rememberOnlineDisplays()
+    _ = knownDisplays()
     apply([(id, false)])
 
     guard shouldConfirm(skipRequested: skipConfirm) else { exit(0) }
@@ -255,7 +283,6 @@ let target = arguments.count > 1 ? arguments[1] : "builtin"
 
 switch command {
 case "list":
-    rememberOnlineDisplays()
     printList()
 
 case "off":
@@ -265,7 +292,7 @@ case "off":
 case "on":
     guard let id = resolve(target) else { fail("дисплей не найден: \(target)") }
     apply([(id, true)])
-    rememberOnlineDisplays()
+    _ = knownDisplays()
 
 case "toggle":
     guard let id = resolve(target) else { fail("дисплей не найден: \(target)") }
@@ -273,23 +300,22 @@ case "toggle":
         disable(id, name: liveName(id), skipConfirm: skipConfirm, timeout: timeout)
     } else {
         apply([(id, true)])
-        rememberOnlineDisplays()
+        _ = knownDisplays()
     }
 
 case "reset":
     resetAll()
-    rememberOnlineDisplays()
     printList()
 
 default:
     print("""
     dspl — включение и выключение мониторов
 
-      dspl list                        список всех известных мониторов
-      dspl off    [builtin|external|<id>]   выключить (спросит подтверждение)
-      dspl on     [builtin|external|<id>]   включить
-      dspl toggle [builtin|external|<id>]   переключить
-      dspl reset                       включить всё обратно
+      dspl list                             список мониторов
+      dspl off    [builtin|external|<#>|<имя>]   выключить (спросит подтверждение)
+      dspl on     [builtin|external|<#>|<имя>]   включить
+      dspl toggle [builtin|external|<#>|<имя>]   переключить
+      dspl reset                            включить всё обратно
 
     Флаги:
       -y, --yes        не спрашивать подтверждение
