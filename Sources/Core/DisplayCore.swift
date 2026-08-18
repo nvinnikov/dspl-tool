@@ -174,6 +174,12 @@ public func listDisplays() -> [DisplayInfo] {
     }
 }
 
+/// Сколько дисплеев сейчас рисуют картинку. Дешёвая проверка без записи
+/// state-файла — её дёргает сторож в приложении несколько раз в минуту.
+public func activeDisplayCount() -> Int {
+    activeDisplayIDs().count
+}
+
 // Роль, порядковый номер или имя монитора. Сырой id аргументом не принимаем:
 // он нестабилен между переподключениями и в выводе есть только для справки.
 public func resolveDisplay(_ argument: String) -> DisplayInfo? {

@@ -20,6 +20,8 @@ func symbolIcon(_ name: String, fallback: String) -> NSImage? {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
+    private var watchdog: Timer?
+    private var sleeping = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -30,9 +32,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Мониторы могут пропасть и появиться помимо нас — держим иконку честной.
         NotificationCenter.default.addObserver(
-            self, selector: #selector(updateIcon),
+            self, selector: #selector(screenParametersChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil
         )
+
+        let workspace = NSWorkspace.shared.notificationCenter
+        workspace.addObserver(self, selector: #selector(willSleep),
+                              name: NSWorkspace.willSleepNotification, object: nil)
+        workspace.addObserver(self, selector: #selector(didWake),
+                              name: NSWorkspace.didWakeNotification, object: nil)
+
+        // Уведомление может не прийти, а остаться без картинки — дорого.
+        watchdog = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            self?.rescueIfBlind()
+        }
+    }
+
+    // MARK: - Сторож
+
+    // Единственный способ остаться без активных дисплеев — физически отключить
+    // тот, что работал: погасить последний включённый мы не даём. Значит это
+    // авария, и надо вернуть всё, что помним.
+    @objc private func screenParametersChanged() {
+        updateIcon()
+        rescueIfBlind()
+    }
+
+    @objc private func willSleep() { sleeping = true }
+
+    @objc private func didWake() {
+        // Дисплеи возвращаются не мгновенно; сторож в этот момент вернул бы
+        // экран, который человек специально погасил.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.sleeping = false }
+    }
+
+    private func rescueIfBlind() {
+        guard !sleeping, activeDisplayCount() == 0 else { return }
+
+        // Подтверждаем: при засыпании и переключении режимов ноль дисплеев
+        // бывает кратковременно и сам проходит.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, !self.sleeping, activeDisplayCount() == 0 else { return }
+            _ = resetAllDisplays()
+            self.updateIcon()
+        }
     }
 
     // MARK: - Иконка
