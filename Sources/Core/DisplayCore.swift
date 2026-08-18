@@ -96,13 +96,17 @@ struct DisplaySnapshot: Codable {
     let name: String
     let width: Int
     let height: Int
+    // Единственный способ отличить погашенный нами монитор от выдернутого из
+    // розетки: система показывает оба одинаково — их просто нет.
+    var disabledByUs: Bool
 
-    init(id: CGDirectDisplayID, number: Int, name: String, width: Int, height: Int) {
+    init(id: CGDirectDisplayID, number: Int, name: String,
+         width: Int, height: Int, disabledByUs: Bool = false) {
         self.id = id; self.number = number; self.name = name
-        self.width = width; self.height = height
+        self.width = width; self.height = height; self.disabledByUs = disabledByUs
     }
 
-    // number появился позже — старый state-файл без него должен читаться.
+    // Поля добавлялись со временем — старый state-файл без них должен читаться.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(CGDirectDisplayID.self, forKey: .id)
@@ -110,7 +114,29 @@ struct DisplaySnapshot: Codable {
         name = try container.decode(String.self, forKey: .name)
         width = try container.decode(Int.self, forKey: .width)
         height = try container.decode(Int.self, forKey: .height)
+        disabledByUs = try container.decodeIfPresent(Bool.self, forKey: .disabledByUs) ?? false
     }
+}
+
+func loadSnapshots() -> [CGDirectDisplayID: DisplaySnapshot] {
+    guard let data = try? Data(contentsOf: stateURL),
+          let saved = try? JSONDecoder().decode([DisplaySnapshot].self, from: data)
+    else { return [:] }
+    return Dictionary(uniqueKeysWithValues: saved.map { ($0.id, $0) })
+}
+
+func saveSnapshots(_ snapshots: [CGDirectDisplayID: DisplaySnapshot]) {
+    let sorted = snapshots.values.sorted { $0.number < $1.number }
+    try? JSONEncoder().encode(sorted).write(to: stateURL)
+}
+
+/// Помечаем, что монитор погасили мы. Без метки он неотличим от отсоединённого.
+func markDisabled(_ id: CGDirectDisplayID, _ disabled: Bool) {
+    var snapshots = loadSnapshots()
+    guard var snapshot = snapshots[id] else { return }
+    snapshot.disabledByUs = disabled
+    snapshots[id] = snapshot
+    saveSnapshots(snapshots)
 }
 
 let stateURL: URL = {
@@ -139,20 +165,18 @@ public struct DisplayInfo {
 // номера — сырой CGDirectDisplayID бывает вида 724045334 и руками не набирается.
 @discardableResult
 public func listDisplays() -> [DisplayInfo] {
-    var byID: [CGDirectDisplayID: DisplaySnapshot] = [:]
-    if let data = try? Data(contentsOf: stateURL),
-       let saved = try? JSONDecoder().decode([DisplaySnapshot].self, from: data) {
-        for snapshot in saved { byID[snapshot.id] = snapshot }
-    }
+    var byID = loadSnapshots()
 
+    let online = onlineDisplayIDs()
     let names = ioDisplayNames()
-    for id in onlineDisplayIDs() {
+    for id in online {
         byID[id] = DisplaySnapshot(
             id: id,
             number: byID[id]?.number ?? 0,
             name: liveName(id, names: names),
             width: CGDisplayPixelsWide(id),
-            height: CGDisplayPixelsHigh(id)
+            height: CGDisplayPixelsHigh(id),
+            disabledByUs: false          // раз система его видит, гасить нечего
         )
     }
 
@@ -163,15 +187,43 @@ public func listDisplays() -> [DisplayInfo] {
         byID[id]!.number = next
         used.insert(next)
     }
+    saveSnapshots(byID)
 
-    let snapshots = byID.values.sorted { $0.number < $1.number }
-    try? JSONEncoder().encode(snapshots).write(to: stateURL)
-
+    // Монитор, которого нет онлайн и который гасили не мы, физически отключён —
+    // показывать его выключенным значит врать.
+    let onlineSet = Set(online)
     let active = Set(activeDisplayIDs())
-    return snapshots.map {
-        DisplayInfo(id: $0.id, number: $0.number, name: $0.name,
-                    width: $0.width, height: $0.height, isActive: active.contains($0.id))
+    return byID.values
+        .filter { onlineSet.contains($0.id) || $0.disabledByUs }
+        .sorted { $0.number < $1.number }
+        .map {
+            DisplayInfo(id: $0.id, number: $0.number, name: $0.name,
+                        width: $0.width, height: $0.height, isActive: active.contains($0.id))
+        }
+}
+
+let logURL = stateURL.deletingLastPathComponent().appendingPathComponent("dspl.log")
+
+/// Дневник сторожа. Разобраться, почему он не сработал, можно только по следам:
+/// в момент аварии на экран смотреть нечем.
+public func logEvent(_ message: String) {
+    let stamp = ISO8601DateFormatter().string(from: Date())
+    let line = "\(stamp) \(message)\n"
+    guard let data = line.data(using: .utf8) else { return }
+    if let handle = try? FileHandle(forWritingTo: logURL) {
+        handle.seekToEndOfFile()
+        handle.write(data)
+        try? handle.close()
+    } else {
+        try? data.write(to: logURL)
     }
+}
+
+/// Состояние дисплеев одной строкой для лога.
+public func displaysDigest() -> String {
+    let active = activeDisplayIDs().sorted()
+    let online = onlineDisplayIDs().sorted()
+    return "active=\(active) online=\(online)"
 }
 
 /// Сколько дисплеев сейчас рисуют картинку. Дешёвая проверка без записи
@@ -182,8 +234,20 @@ public func activeDisplayCount() -> Int {
 
 // Роль, порядковый номер или имя монитора. Сырой id аргументом не принимаем:
 // он нестабилен между переподключениями и в выводе есть только для справки.
+//
+// Ищем и среди скрытых записей: монитор, погашенный старой версией, метки не
+// имеет и в списке не показывается — но включить его обратно должно быть можно.
 public func resolveDisplay(_ argument: String) -> DisplayInfo? {
-    let displays = listDisplays()
+    let visible = listDisplays()
+    let active = Set(activeDisplayIDs())
+    let hidden = loadSnapshots().values
+        .filter { snapshot in !visible.contains { $0.id == snapshot.id } }
+        .sorted { $0.number < $1.number }
+        .map {
+            DisplayInfo(id: $0.id, number: $0.number, name: $0.name,
+                        width: $0.width, height: $0.height, isActive: active.contains($0.id))
+        }
+    let displays = visible + hidden
     let query = argument.lowercased()
 
     if query == "builtin" { return displays.first { $0.isBuiltin } }
@@ -214,6 +278,7 @@ public func setDisplay(_ id: CGDirectDisplayID, enabled: Bool) -> String? {
     }
     // .forSession, а не .permanently: перезагрузка вернёт всё как было.
     CGCompleteDisplayConfiguration(config, .forSession)
+    markDisabled(id, !enabled)
     return nil
 }
 
@@ -224,7 +289,7 @@ public func setDisplay(_ id: CGDirectDisplayID, enabled: Bool) -> String? {
 public func resetAllDisplays() -> String? {
     guard let configure = configureDisplay else { return missingSymbol }
 
-    let candidates = Set(listDisplays().map { $0.id }).union(1...8)
+    let candidates = Set(loadSnapshots().keys).union(1...8)
     // Каждый id — своей транзакцией: неудачный вызов внутри общей конфигурации
     // валит её целиком, и валидные дисплеи тоже не включаются.
     for id in candidates.sorted() {
@@ -236,5 +301,11 @@ public func resetAllDisplays() -> String? {
             CGCancelDisplayConfiguration(config)
         }
     }
+
+    // Метки снимаем со всех: кто вернулся — уже онлайн, кто нет — отсоединён,
+    // и держать его в списке выключенным незачем. Так список сам себя лечит.
+    var snapshots = loadSnapshots()
+    for id in snapshots.keys { snapshots[id]!.disabledByUs = false }
+    saveSnapshots(snapshots)
     return nil
 }

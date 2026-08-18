@@ -6,6 +6,17 @@ import ServiceManagement
 
 let rollbackSeconds = 15
 
+// Callback WindowServer срабатывает на подключение и отключение железа даже
+// тогда, когда AppKit-уведомление не доходит. Ссылку на делегата держим глобально:
+// в C-функцию контекст объекта не передать.
+weak var sharedDelegate: AppDelegate?
+
+func displayReconfigured(_ display: CGDirectDisplayID, _ flags: CGDisplayChangeSummaryFlags,
+                         _ context: UnsafeMutableRawPointer?) {
+    logEvent("cg-callback display=\(display) flags=\(flags.rawValue) \(displaysDigest())")
+    DispatchQueue.main.async { sharedDelegate?.displayConfigurationChanged() }
+}
+
 // У приложения нет собственного .icns, поэтому в алертах показываем SF Symbol.
 // Символы приходят и уходят между версиями macOS — отсюда fallback.
 func symbolIcon(_ name: String, fallback: String) -> NSImage? {
@@ -22,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var watchdog: Timer?
     private var sleeping = false
+    private var appNapToken: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -42,10 +54,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         workspace.addObserver(self, selector: #selector(didWake),
                               name: NSWorkspace.didWakeNotification, object: nil)
 
+        // Без этого macOS усыпляет фоновое приложение и растягивает интервал
+        // таймера на десятки секунд — сторож просыпается уже после аварии.
+        appNapToken = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleSystemSleepDisabled],
+            reason: "Следим, чтобы не остаться без активных дисплеев"
+        )
+
+        sharedDelegate = self
+        CGDisplayRegisterReconfigurationCallback(displayReconfigured, nil)
+
         // Уведомление может не прийти, а остаться без картинки — дорого.
-        watchdog = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-            self?.rescueIfBlind()
+        watchdog = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            self?.rescueIfBlind(source: "timer")
         }
+
+        logEvent("запуск \(displaysDigest())")
     }
 
     // MARK: - Сторож
@@ -54,26 +78,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // тот, что работал: погасить последний включённый мы не даём. Значит это
     // авария, и надо вернуть всё, что помним.
     @objc private func screenParametersChanged() {
-        updateIcon()
-        rescueIfBlind()
+        logEvent("screen-params \(displaysDigest())")
+        displayConfigurationChanged()
     }
 
-    @objc private func willSleep() { sleeping = true }
+    func displayConfigurationChanged() {
+        updateIcon()
+        rescueIfBlind(source: "config")
+    }
+
+    @objc private func willSleep() {
+        sleeping = true
+        logEvent("сон")
+    }
 
     @objc private func didWake() {
+        logEvent("пробуждение \(displaysDigest())")
         // Дисплеи возвращаются не мгновенно; сторож в этот момент вернул бы
         // экран, который человек специально погасил.
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.sleeping = false }
     }
 
-    private func rescueIfBlind() {
-        guard !sleeping, activeDisplayCount() == 0 else { return }
+    private func rescueIfBlind(source: String) {
+        guard activeDisplayCount() == 0 else { return }
+        logEvent("ноль дисплеев (\(source)), sleeping=\(sleeping) \(displaysDigest())")
+        guard !sleeping else { return }
 
         // Подтверждаем: при засыпании и переключении режимов ноль дисплеев
         // бывает кратковременно и сам проходит.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            guard let self, !self.sleeping, activeDisplayCount() == 0 else { return }
-            _ = resetAllDisplays()
+            guard let self else { return }
+            guard !self.sleeping, activeDisplayCount() == 0 else {
+                logEvent("отбой, картинка вернулась сама \(displaysDigest())")
+                return
+            }
+            let error = resetAllDisplays()
+            logEvent("спасение: \(error ?? "ок") \(displaysDigest())")
             self.updateIcon()
         }
     }
