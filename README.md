@@ -11,8 +11,12 @@
 ## Установка
 
 ```bash
-brew install nvinnikov/dspl/dspl
+brew tap nvinnikov/dspl
+brew install dspl
 ```
+
+После `brew tap` формула зовётся коротким именем. Без тапа — полным:
+`brew install nvinnikov/dspl/dspl`.
 
 CLI готов сразу. Приложение ставится в `$(brew --prefix)/opt/dspl/DsplBar.app`,
 чтобы оно попало в Launchpad:
