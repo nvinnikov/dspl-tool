@@ -71,6 +71,112 @@ dspl reset
 `CGCompleteDisplayConfiguration(.forSession)`, так что перезагрузка тоже всё
 восстановит.
 
+## How to: с нуля до хоткея
+
+### 1. Поставить
+
+```bash
+git clone https://github.com/nvinnikov/dspl-tool.git
+cd dspl-tool
+bash install.sh
+```
+
+Если `install.sh` дописал `~/bin` в `PATH` — перезапусти терминал или выполни
+`source ~/.zshrc`. Проверка:
+
+```bash
+dspl list
+```
+
+Должен появиться список мониторов. Если вместо него `command not found` — зови
+полным путём `~/bin/dspl` или разберись с `PATH`.
+
+### 2. Понять, какой монитор какой
+
+```bash
+$ dspl list
+1	OFF	Built-in Display      	1512x982
+2	on 	Kuycon G27-X          	2560x1440
+```
+
+Колонки: id, состояние, имя, разрешение. `Built-in Display` — экран самого
+MacBook. Дальше можно обращаться либо по id (`1`), либо по имени роли
+(`builtin`, `external`).
+
+### 3. Первый раз — на внешнем мониторе
+
+Начни с внешнего, а не со встроенного: если что-то пойдёт не так, у тебя
+останется экран, на котором видно терминал.
+
+```bash
+dspl off external
+```
+
+Монитор погаснет и появится вопрос. Ничего не нажимай — через 5 секунд он
+вернётся сам. Так ты убедишься, что откат работает, ничем не рискуя.
+
+### 4. Погасить экран MacBook
+
+```bash
+dspl off builtin
+```
+
+Картинка на встроенном пропадёт, окна переедут на внешний. Клавиатура, трекпад
+и динамики продолжают работать — это не clamshell, крышку закрывать не нужно.
+
+Устраивает — жми `y` и Enter. Не устраивает или что-то выглядит сломанным —
+просто подожди, всё вернётся.
+
+Вернуть вручную:
+
+```bash
+dspl on builtin
+```
+
+### 5. Повесить на хоткей
+
+Одна команда для «туда-обратно»:
+
+```bash
+dspl toggle builtin
+```
+
+**Raycast.** Положи файл в свою папку Script Commands:
+
+```bash
+#!/bin/bash
+# @raycast.schemaVersion 1
+# @raycast.title Toggle built-in display
+# @raycast.mode silent
+~/bin/dspl toggle builtin
+```
+
+Готовый лежит в репозитории: `raycast/toggle-builtin-display.sh`. Добавь папку
+`raycast` в Raycast → Extensions → Script Commands → Add Directory, потом назначь
+хоткей на саму команду.
+
+**Karabiner-Elements.** В `complex_modifications` действие:
+
+```json
+{ "shell_command": "$HOME/bin/dspl toggle builtin" }
+```
+
+**Shortcuts / Automator.** Действие «Run Shell Script» с той же строкой.
+
+Подтверждение при запуске с хоткея не спрашивается — stdin там не терминал,
+и утилита это понимает. Если хочешь вернуть экран, жми хоткей ещё раз.
+
+### 6. Если экран пропал и непонятно что делать
+
+Набери вслепую:
+
+```bash
+dspl reset
+```
+
+Вернёт все мониторы. Не помогло — перезагрузка: состояние ставится как
+`.forSession` и после ребута сбрасывается само.
+
 ## Как это устроено
 
 Публичного API для отключения дисплея у macOS нет. Утилита резолвит приватный
