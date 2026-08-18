@@ -1,3 +1,4 @@
 dspl
+build/
 *.o
 .DS_Store

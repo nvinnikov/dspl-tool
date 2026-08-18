@@ -1,0 +1,174 @@
+// DsplBar — иконка в статус-баре поверх DisplayCore.
+// Логики работы с мониторами здесь нет, только меню и подтверждение.
+
+import AppKit
+import ServiceManagement
+
+let rollbackSeconds = 5
+
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    private var statusItem: NSStatusItem!
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let menu = NSMenu()
+        menu.delegate = self
+        statusItem.menu = menu
+        updateIcon()
+
+        // Мониторы могут пропасть и появиться помимо нас — держим иконку честной.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(updateIcon),
+            name: NSApplication.didChangeScreenParametersNotification, object: nil
+        )
+    }
+
+    // MARK: - Иконка
+
+    // Значок показывает, есть ли выключенные мониторы, чтобы не открывать меню.
+    @objc private func updateIcon() {
+        let hasDisabled = listDisplays().contains { !$0.isActive }
+        let candidates = hasDisabled
+            ? ["display.slash", "display.trianglebadge.exclamationmark", "display"]
+            : ["display"]
+
+        for name in candidates {
+            if let image = NSImage(systemSymbolName: name, accessibilityDescription: "Мониторы") {
+                image.isTemplate = true
+                statusItem.button?.image = image
+                statusItem.button?.title = ""
+                return
+            }
+        }
+        statusItem.button?.image = nil
+        statusItem.button?.title = hasDisabled ? "▨" : "▣"
+    }
+
+    // MARK: - Меню
+
+    func menuWillOpen(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        let displays = listDisplays()
+        let activeCount = displays.filter { $0.isActive }.count
+
+        for display in displays {
+            let item = NSMenuItem(
+                title: "\(display.name)  —  \(display.resolution)",
+                action: #selector(toggleDisplay(_:)), keyEquivalent: ""
+            )
+            item.target = self
+            item.state = display.isActive ? .on : .off
+            item.representedObject = display.number
+            // Последний включённый гасить нельзя — гасим меню, а не экран.
+            item.isEnabled = !(display.isActive && activeCount == 1)
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
+
+        let reset = NSMenuItem(title: "Включить все", action: #selector(resetAll), keyEquivalent: "")
+        reset.target = self
+        reset.isEnabled = displays.contains { !$0.isActive }
+        menu.addItem(reset)
+
+        let login = NSMenuItem(title: "Запускать при входе",
+                               action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        login.target = self
+        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(login)
+
+        menu.addItem(.separator())
+        let quit = NSMenuItem(title: "Выйти", action: #selector(quit), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+    }
+
+    // MARK: - Действия
+
+    @objc private func toggleDisplay(_ sender: NSMenuItem) {
+        guard let number = sender.representedObject as? Int,
+              let display = resolveDisplay("\(number)") else { return }
+
+        if display.isActive {
+            if let error = setDisplay(display.id, enabled: false) {
+                report("Не удалось выключить \(display.name)", error)
+                return
+            }
+            confirmOrRollback(display)
+        } else if let error = setDisplay(display.id, enabled: true) {
+            report("Не удалось включить \(display.name)", error)
+        }
+        updateIcon()
+    }
+
+    @objc private func resetAll() {
+        if let error = resetAllDisplays() { report("Не удалось включить мониторы", error) }
+        updateIcon()
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        let service = SMAppService.mainApp
+        do {
+            if service.status == .enabled {
+                try service.unregister()
+            } else {
+                try service.register()
+            }
+        } catch {
+            report("Не удалось изменить автозапуск", error.localizedDescription)
+        }
+    }
+
+    @objc private func quit() { NSApp.terminate(nil) }
+
+    // MARK: - Подтверждение с откатом
+
+    // В CLI на этот вопрос отвечают вслепую — здесь кнопка видна на оставшемся
+    // экране, так что достаточно на неё посмотреть.
+    private func confirmOrRollback(_ display: DisplayInfo) {
+        let alert = NSAlert()
+        alert.messageText = "\(display.name) выключен"
+        alert.addButton(withTitle: "Оставить")
+        alert.addButton(withTitle: "Вернуть")
+
+        var secondsLeft = rollbackSeconds
+        alert.informativeText = "Вернём через \(secondsLeft) с, если не подтвердить."
+
+        let timer = Timer(timeInterval: 1, repeats: true) { timer in
+            secondsLeft -= 1
+            if secondsLeft <= 0 {
+                timer.invalidate()
+                NSApp.abortModal()
+            } else {
+                alert.informativeText = "Вернём через \(secondsLeft) с, если не подтвердить."
+            }
+        }
+        // .common, иначе таймер не тикает, пока крутится модальный runloop.
+        RunLoop.main.add(timer, forMode: .common)
+
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        timer.invalidate()
+
+        guard response != .alertFirstButtonReturn else { return }
+        if let error = setDisplay(display.id, enabled: true) {
+            report("Откат не удался", error)
+        }
+    }
+
+    private func report(_ title: String, _ detail: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = detail
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+}
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.setActivationPolicy(.accessory)   // без иконки в доке
+app.run()
