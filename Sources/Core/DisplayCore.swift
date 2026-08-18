@@ -167,8 +167,8 @@ public struct DisplayInfo {
 public func listDisplays() -> [DisplayInfo] {
     var byID = loadSnapshots()
 
-    let online = onlineDisplayIDs()
     let names = ioDisplayNames()
+    let online = onlineDisplayIDs().filter { !isPhantom($0, names: names) }
     for id in online {
         byID[id] = DisplaySnapshot(
             id: id,
@@ -221,15 +221,31 @@ public func logEvent(_ message: String) {
 
 /// Состояние дисплеев одной строкой для лога.
 public func displaysDigest() -> String {
-    let active = activeDisplayIDs().sorted()
-    let online = onlineDisplayIDs().sorted()
-    return "active=\(active) online=\(online)"
+    let names = ioDisplayNames()
+    func describe(_ ids: [CGDirectDisplayID]) -> String {
+        ids.sorted().map { id in
+            let kind = isPhantom(id, names: names) ? "призрак" : "реальный"
+            return "\(id)/\(kind)/v\(CGDisplayVendorNumber(id))m\(CGDisplayModelNumber(id))"
+        }.joined(separator: " ")
+    }
+    return "active=[\(describe(activeDisplayIDs()))] online=[\(describe(onlineDisplayIDs()))]"
 }
 
-/// Сколько дисплеев сейчас рисуют картинку. Дешёвая проверка без записи
-/// state-файла — её дёргает сторож в приложении несколько раз в минуту.
+// Когда настоящих мониторов не остаётся, macOS поднимает headless-заглушку,
+// чтобы сессия не умерла. Для системы она полноценный активный дисплей, но
+// картинку человек не видит — значит для нас это ноль экранов.
+// Признак: не встроенный и без имени в IORegistry, то есть без EDID.
+func isPhantom(_ id: CGDirectDisplayID, names: [UInt64: String]) -> Bool {
+    guard CGDisplayIsBuiltin(id) == 0 else { return false }
+    let key = UInt64(CGDisplayVendorNumber(id)) << 32 | UInt64(CGDisplayModelNumber(id))
+    return names[key] == nil
+}
+
+/// Сколько настоящих мониторов сейчас рисуют картинку. Дешёвая проверка без
+/// записи state-файла — её дёргает сторож в приложении несколько раз в минуту.
 public func activeDisplayCount() -> Int {
-    activeDisplayIDs().count
+    let names = ioDisplayNames()
+    return activeDisplayIDs().filter { !isPhantom($0, names: names) }.count
 }
 
 // Роль, порядковый номер или имя монитора. Сырой id аргументом не принимаем:
@@ -262,7 +278,9 @@ public func resolveDisplay(_ argument: String) -> DisplayInfo? {
 public func setDisplay(_ id: CGDirectDisplayID, enabled: Bool) -> String? {
     guard let configure = configureDisplay else { return missingSymbol }
 
-    if !enabled && activeDisplayIDs().filter({ $0 != id }).isEmpty {
+    let names = ioDisplayNames()
+    let realActive = activeDisplayIDs().filter { !isPhantom($0, names: names) }
+    if !enabled && realActive.filter({ $0 != id }).isEmpty {
         return "это последний активный дисплей"
     }
     listDisplays()   // запомнить состав, пока дисплей ещё виден системе

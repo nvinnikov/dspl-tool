@@ -56,8 +56,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Без этого macOS усыпляет фоновое приложение и растягивает интервал
         // таймера на десятки секунд — сторож просыпается уже после аварии.
+        // Именно AllowingIdleSystemSleep: App Nap выключаем, а засыпать по
+        // бездействию Маку не мешаем.
         appNapToken = ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiated, .idleSystemSleepDisabled],
+            options: .userInitiatedAllowingIdleSystemSleep,
             reason: "Следим, чтобы не остаться без активных дисплеев"
         )
 
