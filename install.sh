@@ -38,28 +38,9 @@ build_app() {
   swiftc -O "$CORE" "$ROOT/Sources/DsplBar/main.swift" -o "$APP/Contents/MacOS/DsplBar"
 
   # Иконка лежит в репозитории собранной; пересобрать — swift Tools/make-icon.swift
-  if [ -f "$ROOT/Resources/AppIcon.icns" ]; then
-    cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
-  fi
+  cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
-  cat > "$APP/Contents/Info.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key><string>DsplBar</string>
-    <key>CFBundleIconFile</key><string>AppIcon</string>
-    <key>CFBundleIdentifier</key><string>com.nvinnikov.dsplbar</string>
-    <key>CFBundleName</key><string>DsplBar</string>
-    <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
-    <key>LSMinimumSystemVersion</key><string>13.0</string>
-    <!-- Только статус-бар: без иконки в доке и без переключателя по Cmd-Tab. -->
-    <key>LSUIElement</key><true/>
-</dict>
-</plist>
-PLIST
+  cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 
   # Ad-hoc подпись: без неё macOS не даст включить автозапуск через SMAppService.
   codesign --force --sign - "$APP" >/dev/null 2>&1 || echo "подписать не удалось, автозапуск может не работать" >&2
