@@ -57,7 +57,7 @@ var arguments = Array(CommandLine.arguments.dropFirst())
 let skipConfirm = arguments.contains("-y") || arguments.contains("--yes")
 arguments.removeAll { $0 == "-y" || $0 == "--yes" }
 
-let timeout = Int32(ProcessInfo.processInfo.environment["DSPL_TIMEOUT"] ?? "") ?? 5
+let timeout = Int32(ProcessInfo.processInfo.environment["DSPL_TIMEOUT"] ?? "") ?? 15
 let command = arguments.first ?? "list"
 let target = arguments.count > 1 ? arguments[1] : "builtin"
 
@@ -97,7 +97,7 @@ default:
 
     Флаги:
       -y, --yes        не спрашивать подтверждение
-      DSPL_TIMEOUT=10  таймаут отката в секундах (по умолчанию 5)
+      DSPL_TIMEOUT=5   таймаут отката в секундах (по умолчанию 15)
     """)
     exit(1)
 }

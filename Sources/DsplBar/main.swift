@@ -4,7 +4,7 @@
 import AppKit
 import ServiceManagement
 
-let rollbackSeconds = 5
+let rollbackSeconds = 15
 
 // У приложения нет собственного .icns, поэтому в алертах показываем SF Symbol.
 // Символы приходят и уходят между версиями macOS — отсюда fallback.
